@@ -77,6 +77,34 @@ ripartizione proporzionale, limitata alla singola frase.
 Le frasi sono tenute sotto i 200 caratteri: accorcia l'attesa iniziale e impedisce
 alla deriva di allineamento di accumularsi.
 
+Le frasi brevi (fino a 4 parole: "Sì.", "Non lo so.") da sole suonano
+artificiose, perché il modello non ha abbastanza contesto per l'intonazione.
+Vengono quindi sintetizzate insieme alla precedente e alla successiva, sempre
+entro i 200 caratteri, e l'audio viene poi tagliato nella pausa fra l'una e
+l'altra. Per il lettore restano frasi separate, con la loro evidenziazione.
+
+## Pronuncia
+
+I fonemi passati a Kokoro sono preparati come nella pipeline ufficiale del
+modello (`abreader/tts/g2p.py`): è la forma su cui le voci sono state
+addestrate. In particolare *ci/gi/z/zz* arrivano come un suono solo, e le
+virgolette « » restano, così le battute di dialogo hanno la loro intonazione.
+
+Nei libri in italiano le **parole inglesi** vengono riconosciute e lette con la
+pronuncia inglese (britannica): *weekend*, *computer*, *cool*, e le frasi
+inglesi intere come "Oh my God". Il riconoscimento usa un elenco di anglicismi
+(`abreader/tts/anglicismi.txt`) e alcune regole sulla grafia, prudenti: nel
+dubbio la parola resta italiana.
+
+Per correggere una pronuncia c'è **`data/pronunce.txt`**, creato al primo avvio:
+
+    cool = en            leggila in inglese
+    yogurt = it          leggila in italiano
+    Hermione = ermaiòni  leggila come se fosse scritta così
+
+Le correzioni valgono subito per le frasi nuove; le frasi che contengono la
+parola corretta vengono risintetizzate da sole, il resto della cache resta valido.
+
 ### Prestazioni
 
 Su CPU senza GPU la sintesi va a circa **1,3× il tempo reale**: la prima frase si
@@ -105,6 +133,8 @@ tutte selezionabili.
       download_models.py  primo scaricamento dei pesi
       tts/
         engine.py         Kokoro + allineamento parola-per-parola
+        g2p.py            testo -> fonemi, con le parole inglesi
+        anglicismi.txt    elenco delle parole inglesi riconosciute
         cache.py          cache audio su disco e coda di sintesi
     web/                  interfaccia (HTML/CSS/JS, nessun framework)
     app.py                avvio: server + finestra desktop

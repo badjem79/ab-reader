@@ -1,0 +1,69 @@
+# Parole inglesi riconosciute nei testi italiani e lette con la pronuncia inglese.
+#
+# [inglese]   anglicismi e parole che in italiano non esistono
+# [frasi]     parole tipiche di una frase inglese: segnalano che non si tratta di
+#             un prestito isolato, e trascinano in inglese le ambigue vicine
+# [ambigue]   parole che esistono in entrambe le lingue ("come", "me", "so"):
+#             inglesi solo dentro una frase inglese
+# [eccezioni] parole che le regole scambierebbero per inglesi ma non lo sono
+#
+# Le parole non elencate passano per alcune regole sulla grafia (finale in -ing,
+# "th", "sh", "ck", "w" minuscola...). Per correggere una singola parola non serve
+# toccare questo file: c'e' data/pronunce.txt.
+
+[inglese]
+weekend week-end shopping computer mouse laptop tablet smartphone iphone app
+software hardware online offline internet web email e-mail mail password
+account login logout link click social network blog blogger influencer
+follower followers like likes selfie chat streaming podcast download upload
+browser server cloud smart team meeting manager management marketing business
+budget brand leader leadership partner staff briefing deadline feedback report
+know-how startup start-up boss job part-time full-time freelance coach
+performance target trend style fashion outfit trendy glamour sexy cool show
+showroom star gossip reality fiction sitcom serial killer killers thriller
+horror fantasy bestseller best-seller seller best happy end flashback cast
+spoiler trailer remake sequel prequel sound rock pop jazz blues rap hip-hop dj
+single hit band live tour fan fans football basket volley corner dribbling
+pressing match ranking record jogging fitness wellness trekking surf snowboard
+skateboard bike hamburger ketchup fast junk brunch sandwich cheesecake muffin
+cupcake brownie popcorn chips drink drinks cocktail whisky whiskey soft coffee
+break snack take away delivery food pub party okay ok babysitter baby teenager
+gay hobby relax privacy check-in check-out ticket hostess steward jet lag resort
+camping parking park center mall outlet shop discount friday jeans
+t-shirt shorts leggings sneakers hoodie trench blazer make-up makeup lifting
+piercing tattoo flirt feeling story crush ghosting dating appeal sex-appeal
+boom flop slang slogan news fake breaking reporter governance welfare spending
+review austerity spread rating trader trading bond stock holding leasing bluff
+poker slot bowling flipper puzzle joystick videogame videogames gamer game nerd
+geek hacker cyber bug backup update upgrade device touch touchscreen display
+wifi wi-fi bluetooth keyboard desktop screenshot boyfriend girlfriend babe
+darling sorry please thanks background self-made self-control underground
+understatement upper middle working class establishment gentleman gentlemen
+lady miss mister city downtown uptown skyline loft penthouse cowboy saloon
+sheriff ranger marine marines detective cop cops police gang gangster
+bodyguard pusher dealer junkie crack mister okay yeah wow cheers shit fuck
+fucking damn jesus christ christmas merry birthday welcome goodbye bye hello
+hi-tech high-tech low-cost cheap premium free shopper golden boy boys girls
+girl guy guys kid kids daddy mommy mom dad sister brother uncle aunt
+husband wife friend friends people baby-sitter nurse doctor
+mister hotdog hour
+
+[frasi]
+the of and you your yours my mine is was were with for what where when why who
+how this that these those it's i'm you're don't can't won't isn't didn't
+doesn't i'll i've i'd we we're they they're them their he she he's she's his
+her him our not but yes please thank will would could should can have has
+had been being just very really here there now then out up off about from into
+all any some every everything nothing something love god lord dear honey it at
+an if to get got know think want need look see say said tell take make give let
+let's go going gonna wanna right well good bad nice great time day night
+morning home life world money thing way back never ever always again only also
+too much many little big old new same other one two three first last next maybe
+course sure true hell
+
+[ambigue]
+a i in no come me so do far fine man or on be are ha oh ah eh more
+
+[eccezioni]
+walzer wagneriano wagneriana wagneriani wagneriane watt kilowatt wafer shoah
+ashkenazita ashkenaziti goethe thailandia

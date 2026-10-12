@@ -2,6 +2,11 @@
 
 Il modello ONNX (release v1.1) restituisce la durata di ogni fonema: da li' si
 ricava esattamente quando viene pronunciata ogni parola, senza stime.
+
+I fonemi li prepara g2p.py, nella forma su cui il modello e' stato addestrato.
+Le frasi brevi si sintetizzano insieme alle vicine, perche' da sole il modello
+non ha abbastanza contesto per l'intonazione, e l'audio si taglia poi sul
+confine fra una frase e l'altra, che le durate dei fonemi danno esatto.
 """
 
 from __future__ import annotations
@@ -15,6 +20,7 @@ from typing import Any
 import numpy as np
 
 from .. import config
+from . import g2p
 
 log = logging.getLogger(__name__)
 
@@ -36,6 +42,16 @@ _VOICE_LANGS = {
 _LANG_TO_ESPEAK = {"it": "it", "en": "en-us"}
 
 _WS_RE = re.compile(r"\S+")
+
+# Taglio fra due frasi sintetizzate insieme. Le durate dei fonemi dicono dove
+# cercare la pausa, ma sbagliano di qualche centesimo: il punto esatto lo da'
+# l'energia dell'audio. Si lascia un poco di coda dopo l'ultima parola e un
+# poco di attacco prima della prima.
+_CUT_TAIL = 0.06
+_CUT_HEAD = 0.04
+_CUT_FRAME = 0.01
+_CUT_QUIET_DB = -35
+_CUT_REACH = (0.3, 0.15)  # quanto cercare prima della fine e dopo l'inizio previsti
 
 
 @dataclass
@@ -96,7 +112,10 @@ def list_voices() -> list[dict[str, str]]:
 def warmup(voice: str = "af_heart") -> None:
     """Prima inferenza a vuoto: sposta il costo di caricamento fuori dalla riproduzione."""
     try:
-        _engine().create_timed("ok.", voice=voice, speed=1.0, lang=espeak_lang("en", voice))
+        k = _engine()
+        with _lock:
+            ps = _phonemes("ok.", espeak_lang("en", voice))
+            k.create_timed(ps, voice=voice, speed=1.0, is_phonemes=True)
     except Exception as exc:  # il riscaldamento non deve mai bloccare l'avvio
         log.warning("Warmup fallito: %s", exc)
 
@@ -133,7 +152,8 @@ def _split_span(span: tuple[float, float], weights: list[int]) -> list[tuple[flo
     return out
 
 
-def align_words(text: str, word_spans: list[list[int]], spoken, duration: float
+def align_words(text: str, word_spans: list[list[int]],
+                groups: list[tuple[float, float]], duration: float
                 ) -> tuple[list[list[float]], bool]:
     """Assegna a ogni parola del testo l'intervallo di audio in cui viene pronunciata.
 
@@ -145,7 +165,6 @@ def align_words(text: str, word_spans: list[list[int]], spoken, duration: float
     if not ws_tokens or not word_spans:
         return [[0.0, duration] for _ in word_spans], False
 
-    groups = _phoneme_groups(spoken) if spoken else []
     exact = len(groups) == len(ws_tokens)
 
     if exact:
@@ -191,18 +210,110 @@ def align_words(text: str, word_spans: list[list[int]], spoken, duration: float
     return times, exact
 
 
+def _frame_db(audio: np.ndarray, sample_rate: int) -> np.ndarray:
+    """Volume di ogni frame da 10 ms, in dB rispetto al frame piu' forte."""
+    f = int(_CUT_FRAME * sample_rate)
+    n = len(audio) // f
+    rms = np.sqrt((audio[:n * f].reshape(n, f) ** 2).mean(1)) if n else np.zeros(0)
+    return 20 * np.log10(rms / (rms.max() if n else 1.0) + 1e-9)
+
+
+def _cut_points(loudness: np.ndarray, last: tuple[float, float],
+                first: tuple[float, float]) -> list[float]:
+    """Fine della frase precedente e inizio della successiva, in secondi.
+
+    `last` e `first` sono gli intervalli previsti dell'ultima parola dell'una e
+    della prima dell'altra. Fra le due si cerca la pausa piu' lunga, senza
+    scendere oltre meta' delle due parole; se non c'e' una pausa si taglia nel
+    punto piu' silenzioso.
+    """
+    end, start = last[1], first[0]
+    floor = max(end - _CUT_REACH[0], (last[0] + last[1]) / 2)
+    ceil = min(start + _CUT_REACH[1], (first[0] + first[1]) / 2)
+    lo = max(0, int(floor / _CUT_FRAME))
+    hi = min(len(loudness), int(ceil / _CUT_FRAME) + 1)
+    if hi <= lo:
+        mid = (end + start) / 2
+        return [mid, mid]
+
+    best, run_start = None, None
+    for i in range(lo, hi + 1):
+        quiet = i < hi and loudness[i] <= _CUT_QUIET_DB
+        if quiet and run_start is None:
+            run_start = i
+        elif not quiet and run_start is not None:
+            if best is None or i - run_start > best[1] - best[0]:
+                best = (run_start, i)
+            run_start = None
+    if best is None:
+        at = (lo + int(np.argmin(loudness[lo:hi])) + 0.5) * _CUT_FRAME
+        return [at, at]
+
+    a, b = best[0] * _CUT_FRAME, best[1] * _CUT_FRAME
+    half = (b - a) / 2
+    return [a + min(_CUT_TAIL, half), b - min(_CUT_HEAD, half)]
+
+
+def _phonemes(text: str, code: str) -> str:
+    return g2p.phonemize(text, code, vocab=_engine().tokenizer.vocab)
+
+
 def synthesize(text: str, word_spans: list[list[int]], voice: str, speed: float,
                lang: str) -> SynthResult:
     """Sintetizza una frase e restituisce audio e tempi di ogni parola."""
+    return synthesize_group([(text, word_spans)], voice, speed, lang)[0]
+
+
+def synthesize_group(sentences: list[tuple[str, list[list[int]]]], voice: str,
+                     speed: float, lang: str) -> list[SynthResult]:
+    """Sintetizza piu' frasi in un colpo solo e restituisce un risultato per frase."""
     k = _engine()
     code = espeak_lang(lang, voice)
     # espeak tiene stato globale di processo: una sola sintesi alla volta.
     with _lock:
+        parts = [_phonemes(text, code) for text, _ in sentences]
+        joined = " ".join(p for p in parts if p)
+        if not joined:
+            raise ValueError("Nessun fonema da sintetizzare")
         audio, sample_rate, spoken = k.create_timed(
-            text, voice=voice, speed=float(speed), lang=code)
+            joined, voice=voice, speed=float(speed), is_phonemes=True)
 
     audio = np.asarray(audio, dtype=np.float32).ravel()
-    duration = len(audio) / sample_rate
-    times, exact = align_words(text, word_spans, spoken, duration)
-    return SynthResult(audio=audio, sample_rate=sample_rate, duration=duration,
-                       word_times=times, exact=exact)
+    groups = _phoneme_groups(spoken) if spoken else []
+
+    if len(sentences) == 1:
+        (text, spans), = sentences
+        duration = len(audio) / sample_rate
+        times, exact = align_words(text, spans, groups, duration)
+        return [SynthResult(audio, sample_rate, duration, times, exact)]
+
+    counts = [len(p.split()) for p in parts]
+    if 0 in counts or len(groups) != sum(counts):
+        # Senza i confini esatti fra le frasi il taglio cadrebbe a caso:
+        # meglio rinunciare al contesto e sintetizzarle una per una.
+        log.debug("Gruppo di %d frasi sintetizzato frase per frase", len(sentences))
+        return [synthesize(text, spans, voice, speed, lang) for text, spans in sentences]
+
+    own: list[list[tuple[float, float]]] = []
+    at = 0
+    for n in counts:
+        own.append(groups[at:at + n])
+        at += n
+
+    total = len(audio) / sample_rate
+    loudness = _frame_db(audio, sample_rate)
+    bounds = [0.0]
+    for prev, nxt in zip(own, own[1:]):
+        bounds += _cut_points(loudness, prev[-1], nxt[0])
+    bounds.append(total)
+
+    results = []
+    for (text, spans), mine, (a, b) in zip(sentences, own, zip(bounds[::2], bounds[1::2])):
+        lo, hi = int(round(a * sample_rate)), int(round(b * sample_rate))
+        piece = audio[lo:hi]
+        offset = lo / sample_rate
+        duration = len(piece) / sample_rate
+        shifted = [(max(0.0, s - offset), min(duration, e - offset)) for s, e in mine]
+        times, exact = align_words(text, spans, shifted, duration)
+        results.append(SynthResult(piece, sample_rate, duration, times, exact))
+    return results

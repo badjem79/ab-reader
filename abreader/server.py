@@ -9,7 +9,7 @@ from fastapi import Body, FastAPI, File, HTTPException, UploadFile
 from fastapi.responses import FileResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 
-from . import config, epub_parser, store
+from . import config, epub_parser, store, textseg
 from .download_models import models_ready
 from .tts import cache as tts_cache
 from .tts import engine as tts_engine
@@ -191,28 +191,30 @@ def remove_note(note_id: int) -> dict[str, bool]:
 
 # --- sintesi ----------------------------------------------------------------
 
-def _sentence_payload(book_id: str, chapter_idx: int, sentence_idx: int,
-                      voice: str | None, speed: float | None
-                      ) -> tuple[str, list[list[int]], str, float, str]:
+def _group_payload(book_id: str, chapter_idx: int, sentence_idx: int,
+                   voice: str | None, speed: float | None
+                   ) -> tuple[list[tuple[str, list[list[int]]]], int, str, float, str]:
+    """Il gruppo di sintesi della frase, la sua posizione nel gruppo e i parametri."""
     parsed, chapter = _chapter(book_id, chapter_idx)
     sentences = chapter["sentences"]
     if not 0 <= sentence_idx < len(sentences):
         raise HTTPException(404, "Frase non trovata")
-    s = sentences[sentence_idx]
+    start, end = textseg.group_of(sentences, sentence_idx)
+    group = [(s["t"], s["w"]) for s in sentences[start:end]]
     v = _voice_for(parsed, voice)
     sp = float(speed if speed is not None else _settings()["speed"])
-    return s["t"], s["w"], v, sp, parsed["language"]
+    return group, sentence_idx - start, v, sp, parsed["language"]
 
 
 @app.post("/api/tts")
 def post_tts(body: dict[str, Any] = Body(...)) -> dict[str, Any]:
     """Sintetizza una frase, o la riprende dalla cache, con i tempi delle parole."""
     idx = int(body["sentence_idx"])
-    text, spans, voice, speed, lang = _sentence_payload(
+    group, target, voice, speed, lang = _group_payload(
         body["book_id"], int(body["chapter_idx"]), idx,
         body.get("voice"), body.get("speed"))
     try:
-        meta = tts_cache.get(text, spans, voice, speed, lang)
+        meta = tts_cache.get(group, target, voice, speed, lang)
     except Exception as exc:
         log.exception("Sintesi fallita")
         raise HTTPException(500, f"Sintesi fallita: {exc}")
@@ -223,15 +225,16 @@ def post_tts(body: dict[str, Any] = Body(...)) -> dict[str, Any]:
 @app.post("/api/tts/prefetch")
 def post_prefetch(body: dict[str, Any] = Body(...)) -> dict[str, Any]:
     """Mette in coda la sintesi delle frasi successive senza attenderla."""
-    keys = []
+    keys: list[str] = []
     for idx in body.get("sentence_idx", [])[:8]:
         try:
-            text, spans, voice, speed, lang = _sentence_payload(
+            group, _, voice, speed, lang = _group_payload(
                 body["book_id"], int(body["chapter_idx"]), int(idx),
                 body.get("voice"), body.get("speed"))
-            keys.append(tts_cache.prefetch(text, spans, voice, speed, lang))
         except HTTPException:
             break
+        # Frasi dello stesso gruppo portano allo stesso lavoro: si fonde in coda.
+        keys += [k for k in tts_cache.prefetch(group, voice, speed, lang) if k not in keys]
     return {"queued": keys}
 
 

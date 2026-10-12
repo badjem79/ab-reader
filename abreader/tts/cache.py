@@ -2,6 +2,9 @@
 
 La sintesi su CPU va solo ~1,35x piu' veloce del tempo reale: rileggere un
 capitolo, o tornare indietro di qualche frase, deve essere istantaneo.
+
+L'unita' di sintesi e' il gruppo (una frase, o una frase breve con le vicine),
+ma ogni frase ha il suo file: il lettore continua a chiederle una per una.
 """
 
 from __future__ import annotations
@@ -18,11 +21,14 @@ from typing import Any
 import numpy as np
 
 from .. import config
-from . import engine
+from . import engine, g2p
 
 log = logging.getLogger(__name__)
 
-CACHE_VERSION = 1
+# 2: fonemi come nella pipeline ufficiale, parole inglesi, frasi brevi in gruppo.
+CACHE_VERSION = 2
+
+Sentence = tuple[str, list[list[int]]]  # testo e offset delle parole
 
 _pending: dict[str, Future] = {}
 _pending_lock = threading.Lock()
@@ -37,9 +43,16 @@ def _dir() -> Path:
     return d
 
 
-def key_for(text: str, voice: str, speed: float, lang: str) -> str:
-    raw = f"{CACHE_VERSION}|{voice}|{speed:.2f}|{lang}|{text}"
+def key_for(text: str, voice: str, speed: float, lang: str, context: str = "") -> str:
+    """Chiave dell'audio di una frase; `context` e' il testo del gruppo, se c'e'."""
+    custom = g2p.signature(context or text, engine.espeak_lang(lang, voice))
+    raw = f"{CACHE_VERSION}|{voice}|{speed:.2f}|{lang}|{text}|{context}|{custom}"
     return hashlib.sha1(raw.encode("utf-8")).hexdigest()[:20]
+
+
+def group_keys(group: list[Sentence], voice: str, speed: float, lang: str) -> list[str]:
+    context = "\n".join(t for t, _ in group) if len(group) > 1 else ""
+    return [key_for(t, voice, speed, lang, context) for t, _ in group]
 
 
 def paths(key: str) -> tuple[Path, Path]:
@@ -70,57 +83,63 @@ def peek(key: str) -> dict[str, Any] | None:
         return None
 
 
-def _render(text: str, word_spans: list[list[int]], voice: str, speed: float,
-            lang: str, key: str) -> dict[str, Any]:
-    wav_path, meta_path = paths(key)
-    cached = peek(key)
-    if cached and wav_path.exists():
-        return cached
-
-    result = engine.synthesize(text, word_spans, voice, speed, lang)
-    _write_wav(wav_path, result.audio, result.sample_rate)
-    meta = {
-        "key": key,
-        "duration": round(result.duration, 3),
-        "words": result.word_times,
-        "exact": result.exact,
-        "sample_rate": result.sample_rate,
-    }
-    meta_path.write_text(json.dumps(meta), encoding="utf-8")
-    return meta
+def _cached(key: str) -> dict[str, Any] | None:
+    meta = peek(key)
+    return meta if meta and paths(key)[0].exists() else None
 
 
-def get(text: str, word_spans: list[list[int]], voice: str, speed: float,
-        lang: str) -> dict[str, Any]:
-    """Metadati della frase, sintetizzandola se serve. Le richieste doppie si fondono."""
-    key = key_for(text, voice, speed, lang)
-    wav_path, _ = paths(key)
-    cached = peek(key)
-    if cached and wav_path.exists():
-        return cached
+def _render(group: list[Sentence], keys: list[str], voice: str, speed: float,
+            lang: str) -> list[dict[str, Any]]:
+    done = [_cached(k) for k in keys]
+    if all(done):
+        return done
 
+    results = engine.synthesize_group(group, voice, speed, lang)
+    metas = []
+    for key, result in zip(keys, results):
+        wav_path, meta_path = paths(key)
+        _write_wav(wav_path, result.audio, result.sample_rate)
+        meta = {
+            "key": key,
+            "duration": round(result.duration, 3),
+            "words": result.word_times,
+            "exact": result.exact,
+            "sample_rate": result.sample_rate,
+        }
+        meta_path.write_text(json.dumps(meta), encoding="utf-8")
+        metas.append(meta)
+    return metas
+
+
+def _submit(group: list[Sentence], keys: list[str], voice: str, speed: float,
+            lang: str) -> Future:
+    """Mette in coda il gruppo; le richieste doppie si fondono."""
+    job = "+".join(keys)
     with _pending_lock:
-        fut = _pending.get(key)
+        fut = _pending.get(job)
         if fut is None:
-            fut = _pool.submit(_render, text, word_spans, voice, speed, lang, key)
-            _pending[key] = fut
-            fut.add_done_callback(lambda _f, k=key: _pending.pop(k, None))
-    return fut.result()
+            fut = _pool.submit(_render, group, keys, voice, speed, lang)
+            _pending[job] = fut
+            fut.add_done_callback(lambda _f, k=job: _pending.pop(k, None))
+    return fut
 
 
-def prefetch(text: str, word_spans: list[list[int]], voice: str, speed: float,
-             lang: str) -> str:
-    """Mette in coda la sintesi senza attenderla. Restituisce la chiave di cache."""
-    key = key_for(text, voice, speed, lang)
-    wav_path, _ = paths(key)
-    if peek(key) and wav_path.exists():
-        return key
-    with _pending_lock:
-        if key not in _pending:
-            fut = _pool.submit(_render, text, word_spans, voice, speed, lang, key)
-            _pending[key] = fut
-            fut.add_done_callback(lambda _f, k=key: _pending.pop(k, None))
-    return key
+def get(group: list[Sentence], target: int, voice: str, speed: float,
+        lang: str) -> dict[str, Any]:
+    """Metadati della frase `target` del gruppo, sintetizzando il gruppo se serve."""
+    keys = group_keys(group, voice, speed, lang)
+    cached = _cached(keys[target])
+    if cached:
+        return cached
+    return _submit(group, keys, voice, speed, lang).result()[target]
+
+
+def prefetch(group: list[Sentence], voice: str, speed: float, lang: str) -> list[str]:
+    """Mette in coda la sintesi del gruppo senza attenderla. Restituisce le chiavi."""
+    keys = group_keys(group, voice, speed, lang)
+    if not all(_cached(k) for k in keys):
+        _submit(group, keys, voice, speed, lang)
+    return keys
 
 
 def clear() -> int:

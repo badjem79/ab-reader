@@ -165,3 +165,48 @@ def _merge_stubs(text: str, spans: list[tuple[int, int]]) -> list[tuple[int, int
         else:
             out.append((s, e))
     return out
+
+
+# Frasi con al massimo tante parole sono "brevi": da sole il modello non ha
+# abbastanza contesto per dar loro un'intonazione naturale.
+SHORT_SENTENCE_WORDS = 4
+MAX_GROUP_SENTENCES = 4
+
+
+def synthesis_groups(sentences: list[dict]) -> list[tuple[int, int]]:
+    """Intervalli [inizio, fine) di frasi da sintetizzare insieme.
+
+    Una frase breve si lega alla precedente e alla successiva, entro il limite
+    di lunghezza di una frase normale: il contesto migliora l'intonazione, e
+    la latenza resta quella di sempre. La suddivisione dipende solo dal
+    capitolo, cosi' ogni frase cade sempre nello stesso gruppo.
+    """
+    def short(i: int) -> bool:
+        return len(sentences[i]["w"]) <= SHORT_SENTENCE_WORDS
+
+    def closed(i: int) -> bool:
+        # Senza punteggiatura finale e' un titolo o un numero di capitolo:
+        # attaccato alla frase dopo verrebbe letto di corsa, come un tutt'uno.
+        t = sentences[i]["t"].rstrip().rstrip(_CLOSING)
+        return bool(t) and not t[-1].isalnum()
+
+    groups: list[tuple[int, int]] = []
+    i, n = 0, len(sentences)
+    while i < n:
+        j, size = i + 1, len(sentences[i]["t"])
+        while (j < n and j - i < MAX_GROUP_SENTENCES
+               and (short(j - 1) or short(j)) and closed(j - 1)
+               and size + 1 + len(sentences[j]["t"]) <= MAX_SENTENCE_CHARS):
+            size += 1 + len(sentences[j]["t"])
+            j += 1
+        groups.append((i, j))
+        i = j
+    return groups
+
+
+def group_of(sentences: list[dict], idx: int) -> tuple[int, int]:
+    """Il gruppo di sintesi che contiene la frase `idx`."""
+    for start, end in synthesis_groups(sentences):
+        if start <= idx < end:
+            return start, end
+    return idx, idx + 1
