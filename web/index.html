@@ -1,0 +1,117 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>AB Reader</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body data-theme="sepia">
+
+<!-- ===================== LIBRERIA ===================== -->
+<section id="library" class="view">
+  <header class="lib-head">
+    <h1>La tua libreria</h1>
+    <div class="lib-actions">
+      <button id="btn-add" class="btn primary">Aggiungi un EPUB</button>
+      <input type="file" id="file-input" accept=".epub" hidden>
+    </div>
+  </header>
+  <div id="lib-empty" class="empty" hidden>
+    <p>Non c'è ancora nessun libro.</p>
+    <p class="muted">Trascina qui un file <code>.epub</code>, oppure usa il pulsante qui sopra.</p>
+  </div>
+  <ul id="book-list" class="book-list"></ul>
+  <p id="lib-status" class="muted lib-status"></p>
+</section>
+
+<!-- ===================== LETTORE ===================== -->
+<section id="reader-view" class="view" hidden>
+
+  <header class="topbar">
+    <button id="btn-library" class="btn ghost" title="Torna alla libreria">‹ Libreria</button>
+
+    <div class="book-info">
+      <span id="book-title" class="book-title"></span>
+      <select id="chapter-select" class="select" title="Capitolo"></select>
+    </div>
+
+    <div class="spacer"></div>
+
+    <div class="voice-controls">
+      <select id="voice-select" class="select" title="Voce"></select>
+      <label class="speed" title="Velocità di lettura">
+        <input type="range" id="speed" min="0.6" max="1.6" step="0.05" value="1">
+        <span id="speed-label">1.00×</span>
+      </label>
+    </div>
+
+    <div class="view-controls">
+      <button class="btn icon" id="btn-font-down" title="Testo più piccolo">A−</button>
+      <button class="btn icon" id="btn-font-up" title="Testo più grande">A+</button>
+      <select id="theme-select" class="select" title="Tema">
+        <option value="sepia">Seppia</option>
+        <option value="light">Chiaro</option>
+        <option value="dark">Scuro</option>
+      </select>
+      <button class="btn icon" id="btn-notes-toggle" title="Mostra/nascondi appunti">☰</button>
+    </div>
+  </header>
+
+  <main class="workspace">
+    <div id="reader-pane" class="reader-pane">
+      <article id="reader" class="reader"></article>
+    </div>
+
+    <div id="splitter" class="splitter" title="Trascina per ridimensionare"></div>
+
+    <aside id="notes-pane" class="notes-pane">
+      <div class="notes-head">
+        <h2>Appunti</h2>
+        <select id="notes-scope" class="select small">
+          <option value="chapter">Questo capitolo</option>
+          <option value="book">Tutto il libro</option>
+        </select>
+      </div>
+
+      <div class="note-compose">
+        <div id="note-anchor" class="note-anchor muted" hidden></div>
+        <textarea id="note-input" rows="4"
+                  placeholder="Scrivi un appunto…&#10;Verrà agganciato al punto in cui stai leggendo."></textarea>
+        <div class="note-compose-actions">
+          <button id="btn-note-save" class="btn primary small">Salva appunto</button>
+          <button id="btn-note-clear" class="btn ghost small">Annulla</button>
+        </div>
+      </div>
+
+      <ul id="note-list" class="note-list"></ul>
+    </aside>
+  </main>
+
+  <footer class="playbar">
+    <button class="btn icon big" id="btn-prev" title="Frase precedente (←)">⏮</button>
+    <button class="btn play" id="btn-play" title="Riproduci / Pausa (spazio)">▶</button>
+    <button class="btn icon big" id="btn-next" title="Frase successiva (→)">⏭</button>
+
+    <div class="progress-wrap">
+      <div class="progress-line">
+        <span id="pos-label" class="muted">—</span>
+        <span id="status-label" class="status"></span>
+      </div>
+      <div class="progress-track" id="progress-track">
+        <div class="progress-fill" id="progress-fill"></div>
+      </div>
+    </div>
+
+    <button class="btn ghost small" id="btn-resume" title="Riprendi dall'ultima posizione salvata">
+      Riprendi
+    </button>
+  </footer>
+</section>
+
+<div id="toast" class="toast" hidden></div>
+<div id="drop-overlay" class="drop-overlay" hidden><span>Rilascia qui l'EPUB</span></div>
+
+<script src="app.js"></script>
+</body>
+</html>
