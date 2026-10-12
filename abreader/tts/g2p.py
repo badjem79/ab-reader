@@ -51,6 +51,7 @@ _USER_DICT_TEMPLATE = """\
 #   cool = en          leggila in inglese
 #   yogurt = it        leggila in italiano anche se sembra inglese
 #   Hermione = ermaiòni   leggila come se fosse scritta cosi' (in italiano)
+#   apple pie = en     anche piu' parole insieme (solo "en" o "it")
 #
 # Le maiuscole contano solo se scrivi la parola con la maiuscola: "Will" vale
 # solo per "Will", "will" vale per entrambe. Le righe che iniziano con # sono
@@ -66,6 +67,7 @@ _CORE_RE = re.compile(r"^([^\w]*)(.*?)([^\w]*)$", re.UNICODE)
 _ELISION_RE = re.compile(
     r"^((?:[lLdDcCsSmMtTvVnN]|[a-zA-Z]{2,}[lL]|[uU]n|[qQ]uest|[sS]ant|[bB]ell)['’])(.+)$")
 _ITALIAN_ACCENTS = set("àèéìíòóùú")
+_DASH_RE = re.compile(r"(?<!\S)[–-](?!\S)")
 
 
 # --- espeak -----------------------------------------------------------------
@@ -85,6 +87,9 @@ def espeak(text: str, code: str) -> str:
     """Fonemi di `text` come li produce la pipeline ufficiale di Kokoro."""
     text = text.replace("«", "“").replace("»", "”")
     text = text.replace("(", "«").replace(")", "»")
+    # Il trattino d'inciso ("lavoro – ci faranno") si perderebbe: il modello
+    # conosce solo la lineetta lunga, che oltretutto gli fa fare la pausa.
+    text = _DASH_RE.sub("—", text)
     out = _backend(code).phonemize([text])
     ps = out[0].strip() if out else ""
     for old, new in _E2M:
@@ -151,26 +156,34 @@ def _lookup(word: str, entries: dict[str, str]) -> str | None:
     return entries.get(word) or entries.get(word.lower())
 
 
-def signature(text: str, code: str) -> str:
-    """Le voci del dizionario personale che toccano questa frase.
+def _phrases(entries: dict[str, str]) -> list[tuple[list[str], str, str]]:
+    """Le voci di piu' parole: (parole in minuscolo, lingua, voce originale)."""
+    out = []
+    for key, value in entries.items():
+        words = key.lower().split()
+        if len(words) > 1 and value.lower() in ("en", "it"):
+            out.append((words, value.lower(), key))
+    return out
 
-    Entra nella chiave della cache audio: correggere una pronuncia rifa' solo
-    le frasi che contengono quella parola.
+
+def _bare(token: str) -> str:
+    """Il token senza punteggiatura ne' elisione, in minuscolo, per i confronti."""
+    core = _CORE_RE.match(token).group(2)
+    m = _ELISION_RE.match(core)
+    return (m.group(2) if m else core).lower().replace("’", "'")
+
+
+def signature(text: str, code: str) -> str:
+    """Le scelte di pronuncia della frase che non sono "italiano normale".
+
+    Entra nella chiave della cache audio: correggere una pronuncia, nel
+    dizionario personale o nell'elenco incorporato, rifa' solo le frasi in cui
+    quella scelta cambia. Non chiama espeak, quindi costa poco.
     """
     if code != "it":
         return ""
-    entries = user_dict()
-    if not entries:
-        return ""
-    hits = set()
-    for tok in text.split():
-        core = _CORE_RE.match(tok).group(2)
-        m = _ELISION_RE.match(core)
-        for w in filter(None, (core, m and m.group(2))):
-            v = _lookup(w, entries)
-            if v:
-                hits.add(f"{w}={v}")
-    return "|".join(sorted(hits))
+    words = _languages(text.split())
+    return "|".join(f"{n}:{p}{w}={k}" for n, (p, w, k) in enumerate(words) if k != "it")
 
 
 # --- riconoscimento dell'inglese ---------------------------------------------
@@ -216,8 +229,35 @@ def _classify(core: str, entries: dict[str, str]) -> str:
     return "en" if _looks_english(core) else "it"
 
 
-def _languages(tokens: list[str]) -> list[tuple[str, str, str]]:
-    """Per ogni token: (prefisso eliso, parola, lingua o grafia)."""
+def _listed(core: str, entries: dict[str, str]) -> bool:
+    """La parola intera compare nel dizionario personale o nell'elenco incorporato."""
+    low = core.lower().replace("’", "'")
+    return bool(_lookup(core, entries)) or any(low in v for v in _anglicisms().values())
+
+
+def _compound(core: str, entries: dict[str, str]):
+    """Parole col trattino fatte di pezzi di lingue diverse ("cyber-futurismo").
+
+    Restituisce le coppie (pezzo, lingua o grafia), o None se la parola si
+    legge tutta in una lingua.
+    """
+    if "-" not in core or _listed(core, entries):
+        return None
+    parts = [p for p in core.split("-") if p]
+    kinds = []
+    for part in parts:
+        k = _classify(part, entries)
+        kinds.append({"en!": "en", "?": "it"}.get(k, k))
+    if len(parts) < 2 or len(set(kinds)) < 2:
+        return None
+    return tuple(zip(parts, kinds))
+
+
+def _languages(tokens: list[str]) -> list[tuple[str, str, object]]:
+    """Per ogni token: (prefisso eliso, parola, lingua o grafia).
+
+    La lingua di una parola composta mista e' la tupla dei suoi pezzi.
+    """
     entries = user_dict()
     out = []
     for tok in tokens:
@@ -232,7 +272,10 @@ def _languages(tokens: list[str]) -> list[tuple[str, str, str]]:
             if _classify(m.group(2), entries) not in ("it", "?"):
                 prefix, core = lead + m.group(1), m.group(2)
                 lead = ""
-        out.append((prefix, lead + core + trail, _classify(core, entries)))
+        kind = _classify(core, entries)
+        if kind in ("it", "en"):
+            kind = _compound(core, entries) or kind
+        out.append((prefix, lead + core + trail, kind))
 
     # Le ambigue ("me", "so", "come") sono inglesi solo dentro una frase inglese,
     # cioe' in una sequenza di parole inglesi che ne contiene almeno una tipica
@@ -253,6 +296,14 @@ def _languages(tokens: list[str]) -> list[tuple[str, str, str]]:
             elif kinds[n] == "en!":
                 kinds[n] = "en"
         i = j
+
+    # Le espressioni del dizionario personale ("apple pie") hanno l'ultima parola.
+    bare = [_bare(t) for t in tokens]
+    for words, value, _ in _phrases(entries):
+        n = len(words)
+        for i in range(len(bare) - n + 1):
+            if bare[i:i + n] == words:
+                kinds[i:i + n] = [value] * n
     return [(p, w, k) for (p, w, _), k in zip(out, kinds)]
 
 
@@ -319,7 +370,19 @@ def _phonemize_italian(text: str) -> str:
             groups[i:j] = eng
             i = j
             continue
-        if kind == "en":
+        if isinstance(kind, tuple):
+            lead, _, trail = _CORE_RE.match(word).groups()
+            pieces = []
+            for n, (part, k) in enumerate(kind):
+                text_ = (lead if n == 0 else "") + part + (trail if n == len(kind) - 1 else "")
+                if k == "en":
+                    pieces.append(_single(text_, EN_IN_IT))
+                elif k == "it":
+                    pieces.append(_single(text_, "it"))
+                else:
+                    pieces.append(_single(text_.replace(part, k), "it"))
+            body = "".join(pieces)
+        elif kind == "en":
             body = _single(word, EN_IN_IT)
             # "l'happy hour": dopo l'elisione l'acca non si aspira.
             if body.startswith("h"):

@@ -26,7 +26,8 @@ from . import engine, g2p
 log = logging.getLogger(__name__)
 
 # 2: fonemi come nella pipeline ufficiale, parole inglesi, frasi brevi in gruppo.
-CACHE_VERSION = 2
+# 3: la chiave segue le scelte di lingua di ogni frase, non solo il dizionario.
+CACHE_VERSION = 3
 
 Sentence = tuple[str, list[list[int]]]  # testo e offset delle parole
 

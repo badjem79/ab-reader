@@ -101,9 +101,13 @@ Per correggere una pronuncia c'è **`data/pronunce.txt`**, creato al primo avvio
     cool = en            leggila in inglese
     yogurt = it          leggila in italiano
     Hermione = ermaiòni  leggila come se fosse scritta così
+    apple pie = en       anche più parole insieme (solo en o it)
 
-Le correzioni valgono subito per le frasi nuove; le frasi che contengono la
-parola corretta vengono risintetizzate da sole, il resto della cache resta valido.
+Le parole composte col trattino possono essere miste: in *cyber-futurismo*
+la prima metà si legge in inglese, la seconda in italiano.
+
+Le correzioni valgono subito per le frasi nuove; le frasi in cui la pronuncia
+cambia vengono risintetizzate da sole, il resto della cache resta valido.
 
 ### Prestazioni
 
