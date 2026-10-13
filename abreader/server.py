@@ -77,9 +77,22 @@ def post_settings(values: dict[str, Any] = Body(...)) -> dict[str, Any]:
     return _settings()
 
 
+@app.get("/api/cache")
+def get_cache() -> dict[str, Any]:
+    return {"cache_mb": tts_cache.size_mb()}
+
+
 @app.post("/api/cache/clear")
 def clear_cache() -> dict[str, Any]:
     freed = tts_cache.clear()
+    return {"freed_mb": freed, "cache_mb": tts_cache.size_mb()}
+
+
+@app.post("/api/books/{book_id}/cache/clear")
+def clear_book_cache(book_id: str) -> dict[str, Any]:
+    if not store.get_book(book_id):
+        raise HTTPException(404, "Libro non in libreria")
+    freed = tts_cache.clear(book_id)
     return {"freed_mb": freed, "cache_mb": tts_cache.size_mb()}
 
 
@@ -87,7 +100,7 @@ def clear_cache() -> dict[str, Any]:
 
 @app.get("/api/books")
 def get_books() -> list[dict[str, Any]]:
-    return store.list_books()
+    return [{**b, "cache_mb": tts_cache.size_mb(b["id"])} for b in store.list_books()]
 
 
 @app.post("/api/books")
@@ -138,6 +151,7 @@ def get_book(book_id: str) -> dict[str, Any]:
 def remove_book(book_id: str) -> dict[str, bool]:
     store.delete_book(book_id)
     epub_parser.remove(book_id)
+    tts_cache.clear(book_id)
     return {"ok": True}
 
 
@@ -214,12 +228,12 @@ def post_tts(body: dict[str, Any] = Body(...)) -> dict[str, Any]:
         body["book_id"], int(body["chapter_idx"]), idx,
         body.get("voice"), body.get("speed"))
     try:
-        meta = tts_cache.get(group, target, voice, speed, lang)
+        meta = tts_cache.get(body["book_id"], group, target, voice, speed, lang)
     except Exception as exc:
         log.exception("Sintesi fallita")
         raise HTTPException(500, f"Sintesi fallita: {exc}")
     return {**meta, "sentence_idx": idx,
-            "audio_url": f"/api/audio/{meta['key']}.wav"}
+            "audio_url": f"/api/audio/{body['book_id']}/{meta['key']}.wav"}
 
 
 @app.post("/api/tts/prefetch")
@@ -234,15 +248,16 @@ def post_prefetch(body: dict[str, Any] = Body(...)) -> dict[str, Any]:
         except HTTPException:
             break
         # Frasi dello stesso gruppo portano allo stesso lavoro: si fonde in coda.
-        keys += [k for k in tts_cache.prefetch(group, voice, speed, lang) if k not in keys]
+        queued = tts_cache.prefetch(body["book_id"], group, voice, speed, lang)
+        keys += [k for k in queued if k not in keys]
     return {"queued": keys}
 
 
-@app.get("/api/audio/{key}.wav")
-def get_audio(key: str) -> FileResponse:
-    if not key.isalnum():
+@app.get("/api/audio/{book_id}/{key}.wav")
+def get_audio(book_id: str, key: str) -> FileResponse:
+    if not (key.isalnum() and book_id.isalnum()):
         raise HTTPException(400, "Chiave non valida")
-    wav, _ = tts_cache.paths(key)
+    wav, _ = tts_cache.paths(book_id, key)
     if not wav.exists():
         raise HTTPException(404, "Audio non ancora in cache")
     return FileResponse(wav, media_type="audio/wav",

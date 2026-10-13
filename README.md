@@ -147,8 +147,12 @@ tutte selezionabili.
 ## Dati
 
 Tutto sta in `data/`. Per ripartire da zero basta cancellarla (si perdono
-appunti e posizioni). Per liberare solo lo spazio audio, cancella
-`data/cache/tts/`.
+appunti e posizioni).
+
+L'audio sintetizzato sta in `data/cache/tts/`, una cartella per libro. Dalla
+libreria si può svuotare quello di un singolo libro (*Svuota audio*) o tutto
+insieme (*Svuota tutto l'audio*); rimuovere un libro ne cancella anche l'audio.
+L'audio viene rifatto alla prossima lettura.
 
 ## Limiti attuali
 

@@ -428,8 +428,18 @@ const saveProgress = debounce(saveProgressNow, 900);
 
 // ---------------------------------------------------------------- libreria
 
+/** Megabyte in forma leggibile: "<1 MB", "340 MB", "1,2 GB". */
+function formatMB(mb) {
+  if (mb < 1) return '<1 MB';
+  if (mb < 1000) return `${Math.round(mb)} MB`;
+  return `${(mb / 1000).toFixed(1).replace('.', ',')} GB`;
+}
+
 async function loadLibrary() {
-  const books = await api('/api/books');
+  const [books, cache] = await Promise.all([api('/api/books'), api('/api/cache')]);
+  const all = $('btn-cache-all');
+  all.hidden = !(cache.cache_mb > 0);
+  all.textContent = `Svuota tutto l'audio (${formatMB(cache.cache_mb)})`;
   const list = $('book-list');
   $('lib-empty').hidden = books.length > 0;
   list.innerHTML = books.map((b) => {
@@ -442,6 +452,9 @@ async function loadLibrary() {
         <div class="bi-sub">${escapeHtml(b.author || 'autore ignoto')} · ${b.n_chapters} capitoli · ${pos}</div>
       </div>
       <span class="lang-tag">${escapeHtml(b.language || '?')}</span>
+      ${b.cache_mb > 0 ? `<button class="btn ghost small bi-cache" data-id="${b.id}"
+        title="Cancella l'audio già sintetizzato di questo libro: verrà rifatto alla prossima lettura">
+        Svuota audio (${formatMB(b.cache_mb)})</button>` : ''}
       <button class="btn ghost small bi-del" data-id="${b.id}" title="Rimuovi dalla libreria">Rimuovi</button>
     </li>`;
   }).join('');
@@ -640,7 +653,22 @@ function bindEvents() {
     if (e.target.files[0]) uploadEpub(e.target.files[0]);
     e.target.value = '';
   };
+  $('btn-cache-all').onclick = async () => {
+    if (!confirm("Cancellare l'audio già sintetizzato di tutti i libri? Verrà rifatto alla prossima lettura.")) return;
+    const res = await api('/api/cache/clear', { method: 'POST' });
+    toast(`Cache audio svuotata: liberati ${formatMB(res.freed_mb)}.`);
+    await loadLibrary();
+  };
   $('book-list').onclick = async (e) => {
+    const clear = e.target.closest('.bi-cache');
+    if (clear) {
+      e.stopPropagation();
+      if (!confirm("Cancellare l'audio già sintetizzato di questo libro? Verrà rifatto alla prossima lettura.")) return;
+      const res = await api(`/api/books/${clear.dataset.id}/cache/clear`, { method: 'POST' });
+      toast(`Audio del libro cancellato: liberati ${formatMB(res.freed_mb)}.`);
+      await loadLibrary();
+      return;
+    }
     const del = e.target.closest('.bi-del');
     if (del) {
       e.stopPropagation();
