@@ -102,9 +102,10 @@ def espeak(text: str, code: str) -> str:
 
 @lru_cache(maxsize=1)
 def _anglicisms() -> dict[str, frozenset[str]]:
-    """Le sezioni dell'elenco incorporato: inglese, frasi, ambigue, eccezioni."""
+    """Le sezioni dell'elenco incorporato: inglese, frasi, ambigue, eccezioni, tronche."""
     sections: dict[str, set[str]] = {
-        "inglese": set(), "frasi": set(), "ambigue": set(), "eccezioni": set()}
+        "inglese": set(), "frasi": set(), "ambigue": set(), "eccezioni": set(),
+        "tronche": set()}
     current = "inglese"
     for line in ANGLICISMS_PATH.read_text(encoding="utf-8").splitlines():
         line = line.strip()
@@ -188,18 +189,33 @@ def signature(text: str, code: str) -> str:
 
 # --- riconoscimento dell'inglese ---------------------------------------------
 
-def _looks_english(word: str) -> bool:
-    """Grafie che in italiano non esistono. Prudente: nel dubbio, italiano."""
+def _guess(word: str) -> str:
+    """Grafie che in italiano non esistono: 'en', '?' (ambigua) oppure 'it'.
+
+    Prudente: nel dubbio, italiano.
+    """
     w = word.lower()
     if len(w) < 3 or any(c in _ITALIAN_ACCENTS for c in w) or not w.isascii():
-        return False
+        return "it"
     if w.endswith("ing") and len(w) > 4:
-        return True
+        return "en"
     # "ee" solo prima di consonanti finali: "idee", "europee" sono italiane.
-    if re.search(r"th|(?<!c)sh|ee[^aeiou]+$|ck|ght|oo[^aeiou]$|ea[^aeiou]$|ay$|ey$|ow$", w):
-        return True
-    # La "w" e' anche tedesca (Wagner, walzer): vale solo per le minuscole.
-    return "w" in w and word.islower()
+    if re.search(r"(?<!c)sh|ee[^aeiou]+$|ght|oo[^aeiou]$|ea[^aeiou]$|ay$|ey$|ow$", w):
+        return "en"
+    if re.search(r"th|ck", w):
+        # Nei nomi "th" e "ck" sono anche tedeschi, greci, olandesi: Zarathustra
+        # o Eckardt restano italiani, "The Death of Ivan Ilyich" no.
+        return "?" if word[:1].isupper() else "en"
+    # La "w" e' anche tedesca (walzer), e ci sono i derivati italiani dei nomi
+    # (darwinistica, newtoniano, wagneriana).
+    if "w" in w and word.islower():
+        return "it" if re.search(r"(ism[oi]|ist[aei]|istic[aheio]+|ian[aeio])$", w) else "en"
+    # In italiano finiscono in consonante quasi solo le tronche, che sono
+    # elencate: le altre sono probabilmente inglesi, ma lo diventano solo dentro
+    # una frase inglese ("The Principles of Psychology").
+    if w[-1] not in "aeiou'":
+        return "?"
+    return "it"
 
 
 def _classify(core: str, entries: dict[str, str]) -> str:
@@ -215,7 +231,7 @@ def _classify(core: str, entries: dict[str, str]) -> str:
         return "it"
     lists = _anglicisms()
     low = core.lower().replace("’", "'")
-    if low in lists["eccezioni"]:
+    if low in lists["eccezioni"] or low in lists["tronche"]:
         return "it"
     if low in lists["inglese"]:
         return "en"
@@ -226,7 +242,7 @@ def _classify(core: str, entries: dict[str, str]) -> str:
         return "en!"
     if low in lists["ambigue"]:
         return "?"
-    return "en" if _looks_english(core) else "it"
+    return _guess(core)
 
 
 def _listed(core: str, entries: dict[str, str]) -> bool:
@@ -281,6 +297,9 @@ def _languages(tokens: list[str]) -> list[tuple[str, str, object]]:
     # cioe' in una sequenza di parole inglesi che ne contiene almeno una tipica
     # delle frasi: "Oh my God, come on" si', "come manager" no.
     kinds = [k for _, _, k in out]
+    cores = [_CORE_RE.match(w).group(2) for _, w, _ in out]
+    words = [c.lower() for c in cores]
+    ambiguous = _anglicisms()["ambigue"]
     i = 0
     while i < len(kinds):
         if kinds[i] not in ("en", "en!", "?"):
@@ -289,12 +308,20 @@ def _languages(tokens: list[str]) -> list[tuple[str, str, object]]:
         j = i
         while j < len(kinds) and kinds[j] in ("en", "en!", "?"):
             j += 1
-        english = "en!" in kinds[i:j]
+        # Una preposizione o un articolo davanti a un titolo o a un nome inglese
+        # sono italiani: "a New York", "i The Strokes", "in Time Surfing".
+        while i + 1 < j and kinds[i] == "?" and words[i] in ambiguous \
+                and cores[i].islower() and cores[i + 1][:1].isupper():
+            kinds[i] = "it"
+            i += 1
+        # Una parola "da frase" isolata non fa una frase: "carichi di some",
+        # "il can de l'inferno", "una tazza di the" restano italiani.
+        english = "en!" in kinds[i:j] and j - i > 1
         for n in range(i, j):
             if kinds[n] == "?":
                 kinds[n] = "en" if english else "it"
             elif kinds[n] == "en!":
-                kinds[n] = "en"
+                kinds[n] = "en" if english else "it"
         i = j
 
     # Le espressioni del dizionario personale ("apple pie") hanno l'ultima parola.

@@ -6,6 +6,8 @@
 # [ambigue]   parole che esistono in entrambe le lingue ("come", "me", "so"):
 #             inglesi solo dentro una frase inglese
 # [eccezioni] parole che le regole scambierebbero per inglesi ma non lo sono
+# [tronche]   parole italiane che finiscono in consonante: le altre, se compaiono
+#             in mezzo a una frase inglese, si leggono in inglese
 #
 # Le parole non elencate passano per alcune regole sulla grafia (finale in -ing,
 # "th", "sh", "ck", "w" minuscola...). Per correggere una singola parola non serve
@@ -20,10 +22,10 @@ browser server cloud smart team meeting manager management marketing business
 budget brand leader leadership partner staff briefing deadline feedback report
 know-how startup start-up boss job part-time full-time freelance coach
 performance target trend style fashion outfit trendy glamour sexy cool show
-showroom star gossip reality fiction sitcom serial killer killers thriller
+showroom gossip reality fiction sitcom serial killer killers thriller
 horror fantasy bestseller best-seller seller best happy end flashback cast
 spoiler trailer remake sequel prequel sound rock pop jazz blues rap hip-hop dj
-single hit band live tour fan fans football basket volley corner dribbling
+single hit band live tour fans football basket volley corner dribbling
 pressing match ranking record jogging fitness wellness trekking surf snowboard
 skateboard bike hamburger ketchup fast junk brunch sandwich cheesecake muffin
 cupcake brownie popcorn chips drink drinks cocktail whisky whiskey soft coffee
@@ -40,7 +42,7 @@ wifi wi-fi bluetooth keyboard desktop screenshot boyfriend girlfriend babe
 darling sorry please thanks background self-made self-control underground
 understatement upper middle working class establishment gentleman gentlemen
 lady miss mister city downtown uptown skyline loft penthouse cowboy saloon
-sheriff ranger marine marines detective cop cops police gang gangster
+sheriff ranger marines detective cop cops police gang gangster
 bodyguard pusher dealer junkie crack mister okay yeah wow cheers shit fuck
 fucking damn jesus christ christmas merry birthday welcome goodbye bye hello
 hi-tech high-tech low-cost cheap premium free shopper golden boy boys girls
@@ -63,7 +65,16 @@ course sure true hell
 
 [ambigue]
 a i in no come me so do far fine man or on be are ha oh ah eh more
+star fan
 
 [eccezioni]
 walzer wagneriano wagneriana wagneriani wagneriane watt kilowatt wafer shoah
-ashkenazita ashkenaziti goethe thailandia water
+ashkenazita ashkenaziti goethe thailandia water crear ricrear procrear
+
+[tronche]
+il del nel col al dal sul pel con per non un tra fra ad ed od or quel bel
+gran san ben mal han son fin pur qual tal buon nessun alcun ciascun uom
+signor amor cuor ver sol men vien tien fuor ancor allor talor dolor fior mar
+lor aver esser dover poter voler dir andar venir veder saper parlar sentir
+tener morir dar stan van fan dan son vuol suol pon diman nostr vostr mio
+tuo suo don fior ciel mel fil vel sen sir mai
