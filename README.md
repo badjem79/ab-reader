@@ -42,6 +42,9 @@ motore pronto). Per vedere gli errori a schermo mentre succedono:
    Cliccando la citazione di un appunto torni a quel punto del libro.
 5. La posizione si salva da sola. *Riprendi* torna all'ultimo punto salvato,
    anche da un altro capitolo.
+6. Mentre legge, lo schermo non si spegne e Windows non lo blocca. In pausa
+   tornano a valere le impostazioni di sempre. Se si chiude la finestra lo
+   schermo torna libero di spegnersi entro un paio di minuti.
 
 ### Tastiera
 
@@ -149,7 +152,11 @@ tutte selezionabili.
 Tutto sta in `data/`. Per ripartire da zero basta cancellarla (si perdono
 appunti e posizioni).
 
-L'audio sintetizzato sta in `data/cache/tts/`, una cartella per libro. Dalla
+L'audio sintetizzato sta in `data/cache/tts/`, una cartella per libro,
+compresso in Opus a 32 kbit/s (un dodicesimo del WAV, senza differenze
+udibili per la voce sintetica). La cache ha un tetto di **100 MB**, circa 7 ore
+di lettura: superato, si cancella da solo l'audio ascoltato meno di recente
+(il tetto si cambia con la variabile d'ambiente `ABREADER_CACHE_MB`). Dalla
 libreria si può svuotare quello di un singolo libro (*Svuota audio*) o tutto
 insieme (*Svuota tutto l'audio*); rimuovere un libro ne cancella anche l'audio.
 L'audio viene rifatto alla prossima lettura.

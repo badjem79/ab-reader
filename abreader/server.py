@@ -9,7 +9,7 @@ from fastapi import Body, FastAPI, File, HTTPException, UploadFile
 from fastapi.responses import FileResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 
-from . import config, epub_parser, store, textseg
+from . import config, epub_parser, keepawake, store, textseg
 from .download_models import models_ready
 from .tts import cache as tts_cache
 from .tts import engine as tts_engine
@@ -233,7 +233,7 @@ def post_tts(body: dict[str, Any] = Body(...)) -> dict[str, Any]:
         log.exception("Sintesi fallita")
         raise HTTPException(500, f"Sintesi fallita: {exc}")
     return {**meta, "sentence_idx": idx,
-            "audio_url": f"/api/audio/{body['book_id']}/{meta['key']}.wav"}
+            "audio_url": f"/api/audio/{body['book_id']}/{meta['key']}.opus"}
 
 
 @app.post("/api/tts/prefetch")
@@ -253,14 +253,24 @@ def post_prefetch(body: dict[str, Any] = Body(...)) -> dict[str, Any]:
     return {"queued": keys}
 
 
-@app.get("/api/audio/{book_id}/{key}.wav")
+@app.post("/api/keepawake")
+def post_keepawake(body: dict[str, Any] = Body(...)) -> dict[str, bool]:
+    """Schermo acceso durante la lettura: l'interfaccia rinnova finche' legge."""
+    if body.get("on"):
+        keepawake.hold()
+    else:
+        keepawake.release()
+    return {"ok": True}
+
+
+@app.get("/api/audio/{book_id}/{key}.opus")
 def get_audio(book_id: str, key: str) -> FileResponse:
     if not (key.isalnum() and book_id.isalnum()):
         raise HTTPException(400, "Chiave non valida")
-    wav, _ = tts_cache.paths(book_id, key)
-    if not wav.exists():
+    audio, _ = tts_cache.paths(book_id, key)
+    if not audio.exists():
         raise HTTPException(404, "Audio non ancora in cache")
-    return FileResponse(wav, media_type="audio/wav",
+    return FileResponse(audio, media_type="audio/ogg",
                         headers={"Cache-Control": "public, max-age=86400"})
 
 

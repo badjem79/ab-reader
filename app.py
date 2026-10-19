@@ -126,6 +126,7 @@ def main() -> int:
 def _warmup() -> None:
     from abreader.tts import cache, engine
     cache.remove_legacy()
+    cache.prune()
     engine.warmup()
     log.info("Motore vocale pronto.")
 

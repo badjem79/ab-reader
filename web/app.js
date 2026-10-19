@@ -234,16 +234,36 @@ async function play() {
   }
   pump();
   updatePlayButton();
+  keepAwake(true);
 }
 
 async function pause() {
   player.playing = false;
+  keepAwake(false);
   if (player.ctx && player.ctx.state === 'running') await player.ctx.suspend();
   updatePlayButton();
   setStatus('');
 }
 
 function togglePlay() { player.playing ? pause() : play(); }
+
+// Mentre legge, lo schermo non deve bloccarsi: ascoltando non si tocca nulla.
+// Il server tiene acceso lo schermo a tempo; qui si rinnova finché si legge.
+const KEEPAWAKE_RENEW_MS = 60000;
+let keepAwakeTimer = null;
+
+function keepAwake(on) {
+  if (on === (keepAwakeTimer !== null)) return;  // play() torna qui a ogni seek
+  clearInterval(keepAwakeTimer);
+  keepAwakeTimer = null;
+  const send = () => api('/api/keepawake', { method: 'POST', body: { on } })
+    .catch(() => { /* al più lo schermo si blocca come sempre */ });
+  send();
+  // Non tutte le fermate passano da pause() (un cambio di capitolo, per
+  // esempio): il rinnovo controlla da sé che si stia ancora leggendo.
+  if (on) keepAwakeTimer = setInterval(() => (player.playing ? send() : keepAwake(false)),
+    KEEPAWAKE_RENEW_MS);
+}
 
 /** Riparte da una frase (opzionalmente da una parola precisa al suo interno). */
 async function seek(sentenceIdx, wordIdx = 0, autoplay = null) {

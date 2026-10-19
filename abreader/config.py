@@ -25,6 +25,9 @@ VOICES_URL = "https://github.com/thewh1teagle/kokoro-onnx/releases/download/mode
 
 SAMPLE_RATE = 24000
 
+# Tetto della cache audio: superato, si cancella l'audio ascoltato meno di recente.
+TTS_CACHE_LIMIT_MB = int(os.environ.get("ABREADER_CACHE_MB", "100"))
+
 # Voci predefinite per lingua; usate quando l'utente non ne ha ancora scelta una.
 DEFAULT_VOICES = {
     "en": "af_heart",

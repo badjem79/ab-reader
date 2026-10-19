@@ -15,3 +15,4 @@ numpy>=1.26
 kokoro-onnx>=0.4.9
 espeakng-loader>=0.2.4
 phonemizer-fork>=3.3.2
+soundfile>=0.12        # audio in cache compresso in Opus

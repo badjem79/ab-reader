@@ -72,13 +72,19 @@ _DASH_RE = re.compile(r"(?<!\S)[–-](?!\S)")
 
 # --- espeak -----------------------------------------------------------------
 
+# phonemizer avvisa a ogni frase di cose gia' gestite qui (cambi di lingua
+# rimossi, conteggio parole diverso): il log si riempiva solo di quello.
+_espeak_log = logging.getLogger("phonemizer.espeak")
+_espeak_log.setLevel(logging.ERROR)
+
+
 def _backend(code: str):
     """Un backend per lingua, creato una volta sola (inizializzare espeak costa)."""
     b = _backends.get(code)
     if b is None:
         from phonemizer.backend import EspeakBackend
         b = EspeakBackend(code, preserve_punctuation=True, with_stress=True,
-                          tie="^", language_switch="remove-flags")
+                          tie="^", language_switch="remove-flags", logger=_espeak_log)
         _backends[code] = b
     return b
 

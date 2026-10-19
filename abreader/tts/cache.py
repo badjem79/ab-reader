@@ -8,6 +8,10 @@ ma ogni frase ha il suo file: il lettore continua a chiederle una per una.
 
 Ogni libro ha la sua cartella (data/cache/tts/<id libro>/): si puo' svuotare
 la cache di un libro solo, e rimuovere un libro ne cancella anche l'audio.
+
+L'audio e' in Opus a 32 kbit/s: per una voce a 24 kHz non si distingue dal
+WAV e occupa un dodicesimo. Durata e numero di campioni restano identici,
+quindi i tempi delle parole valgono tali e quali.
 """
 
 from __future__ import annotations
@@ -15,14 +19,15 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import os
 import shutil
 import threading
-import wave
 from concurrent.futures import Future, ThreadPoolExecutor
 from pathlib import Path
 from typing import Any
 
 import numpy as np
+import soundfile as sf
 
 from .. import config
 from . import engine, g2p
@@ -31,9 +36,19 @@ log = logging.getLogger(__name__)
 
 # 2: fonemi come nella pipeline ufficiale, parole inglesi, frasi brevi in gruppo.
 # 3: la chiave segue le scelte di lingua di ogni frase, non solo il dizionario.
-CACHE_VERSION = 3
+# 4: audio in Opus invece che in WAV.
+CACHE_VERSION = 4
+
+# Livello di compressione di libsndfile: 0.9 corrisponde a circa 32 kbit/s.
+_OPUS_LEVEL = 0.9
 
 Sentence = tuple[str, list[list[int]]]  # testo e offset delle parole
+
+# Oltre il tetto si scende un po' sotto, cosi' la pulizia non riparte a ogni frase.
+_PRUNE_TO = 0.9
+
+_size: int | None = None  # byte in cache, contati alla prima occorrenza
+_size_lock = threading.Lock()
 
 _pending: dict[str, Future] = {}
 _pending_lock = threading.Lock()
@@ -64,19 +79,14 @@ def group_keys(group: list[Sentence], voice: str, speed: float, lang: str) -> li
 
 def paths(book_id: str, key: str) -> tuple[Path, Path]:
     d = _dir(book_id)
-    return d / f"{key}.wav", d / f"{key}.json"
+    return d / f"{key}.opus", d / f"{key}.json"
 
 
-def _write_wav(path: Path, audio: np.ndarray, sample_rate: int) -> None:
-    pcm = np.clip(audio, -1.0, 1.0)
-    pcm = (pcm * 32767.0).astype("<i2")
+def _write_audio(path: Path, audio: np.ndarray, sample_rate: int) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_suffix(".wav.part")
-    with wave.open(str(tmp), "wb") as w:
-        w.setnchannels(1)
-        w.setsampwidth(2)
-        w.setframerate(sample_rate)
-        w.writeframes(pcm.tobytes())
+    tmp = path.with_suffix(".opus.part")
+    sf.write(str(tmp), np.clip(audio, -1.0, 1.0), sample_rate, format="OGG",
+             subtype="OPUS", compression_level=_OPUS_LEVEL)
     tmp.replace(path)
 
 
@@ -93,7 +103,15 @@ def peek(book_id: str, key: str) -> dict[str, Any] | None:
 
 def _cached(book_id: str, key: str) -> dict[str, Any] | None:
     meta = peek(book_id, key)
-    return meta if meta and paths(book_id, key)[0].exists() else None
+    if not meta:
+        return None
+    audio = paths(book_id, key)[0]
+    try:
+        # La data di modifica fa da "ultimo uso": la pulizia parte dalle piu' vecchie.
+        os.utime(audio)
+    except OSError:
+        return None
+    return meta
 
 
 def _render(book_id: str, group: list[Sentence], keys: list[str], voice: str,
@@ -104,9 +122,10 @@ def _render(book_id: str, group: list[Sentence], keys: list[str], voice: str,
 
     results = engine.synthesize_group(group, voice, speed, lang)
     metas = []
+    written = 0
     for key, result in zip(keys, results):
-        wav_path, meta_path = paths(book_id, key)
-        _write_wav(wav_path, result.audio, result.sample_rate)
+        audio_path, meta_path = paths(book_id, key)
+        _write_audio(audio_path, result.audio, result.sample_rate)
         meta = {
             "key": key,
             "duration": round(result.duration, 3),
@@ -116,6 +135,8 @@ def _render(book_id: str, group: list[Sentence], keys: list[str], voice: str,
         }
         meta_path.write_text(json.dumps(meta), encoding="utf-8")
         metas.append(meta)
+        written += audio_path.stat().st_size + meta_path.stat().st_size
+    _grew(written, keep=set(keys))
     return metas
 
 
@@ -157,11 +178,77 @@ def _bytes(d: Path) -> int:
     return sum(f.stat().st_size for f in d.rglob("*") if f.is_file())
 
 
+def _limit() -> int:
+    return config.TTS_CACHE_LIMIT_MB * 1_000_000
+
+
+def _grew(nbytes: int, keep: set[str]) -> None:
+    """Conta l'audio appena scritto e, oltre il tetto, fa pulizia."""
+    global _size
+    with _size_lock:
+        if _size is None:
+            _size = _bytes(_root())
+        else:
+            _size += nbytes
+        over = _size > _limit()
+    if over:
+        prune(keep)
+
+
+def prune(keep: set[str] = frozenset()) -> None:
+    """Riporta la cache sotto il tetto, cancellando l'audio usato meno di recente.
+
+    `keep` sono le chiavi da non toccare: l'audio appena sintetizzato, che il
+    lettore sta per chiedere.
+    """
+    global _size
+    with _size_lock:
+        root = _root()
+        entries = []  # (ultimo uso, chiave, file della frase, byte)
+        total = 0
+        for audio in root.glob("*/*.opus"):
+            files = [audio, audio.with_suffix(".json")]
+            try:
+                used = audio.stat().st_mtime
+                nbytes = sum(f.stat().st_size for f in files if f.exists())
+            except OSError:
+                continue
+            total += nbytes
+            entries.append((used, audio.stem, files, nbytes))
+        target = _limit() * _PRUNE_TO
+        if total <= _limit():
+            _size = total
+            return
+
+        freed = 0
+        entries.sort(key=lambda e: e[0])
+        for _, key, files, nbytes in entries:
+            if total - freed <= target:
+                break
+            if key in keep:
+                continue
+            for f in files:
+                f.unlink(missing_ok=True)
+            freed += nbytes
+        for d in root.iterdir():
+            if d.is_dir() and not any(d.iterdir()):
+                try:
+                    d.rmdir()
+                except OSError:  # nel frattempo e' arrivato audio nuovo
+                    pass
+        _size = total - freed
+    log.info("Cache audio oltre %d MB: liberati %.0f MB dell'audio meno recente",
+             config.TTS_CACHE_LIMIT_MB, freed / 1e6)
+
+
 def clear(book_id: str | None = None) -> float:
     """Svuota la cache audio di un libro, o tutta; restituisce i megabyte liberati."""
+    global _size
     d = _dir(book_id) if book_id else _root()
-    freed = _bytes(d)
-    shutil.rmtree(d, ignore_errors=True)
+    with _size_lock:
+        freed = _bytes(d)
+        shutil.rmtree(d, ignore_errors=True)
+        _size = None
     return round(freed / 1e6, 1)
 
 
@@ -171,17 +258,27 @@ def size_mb(book_id: str | None = None) -> float:
 
 
 def remove_legacy() -> None:
-    """Cancella l'audio delle versioni precedenti, salvato senza cartella per libro.
+    """Cancella l'audio delle versioni precedenti: quello salvato senza cartella
+    per libro e quello in WAV.
 
     Quei file non sono piu' raggiungibili: occupano solo spazio.
     """
+    global _size
     root = _root()
     if not root.is_dir():
         return
+    old = [f for f in root.iterdir() if f.is_file()]
+    for wav in root.glob("*/*.wav"):
+        old += [wav, wav.with_suffix(".json")]
     freed = 0
-    for f in root.iterdir():
-        if f.is_file():
-            freed += f.stat().st_size
+    with _size_lock:
+        for f in old:
+            try:
+                freed += f.stat().st_size
+            except OSError:
+                continue
             f.unlink(missing_ok=True)
+        if freed:
+            _size = None
     if freed:
         log.info("Cache audio delle versioni precedenti rimossa: %.0f MB", freed / 1e6)
